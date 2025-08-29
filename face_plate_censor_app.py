@@ -1,9 +1,14 @@
-
 import os
 import io
 import cv2
+import spacy
 import numpy as np
 import streamlit as st
+import pytesseract
+import re
+from presidio_analyzer import AnalyzerEngine
+
+pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 
 st.set_page_config(page_title="Face & Plate Censor", page_icon="🕶️", layout="centered")
 
@@ -100,6 +105,72 @@ def detect_faces_and_plates(img_bgr: np.ndarray, want_faces: bool, want_plates: 
                     "Consider downloading 'haarcascade_russian_plate_number.xml' and placing it in OpenCV's data folder.")
     return faces, plates
 
+def detect_pii_presidio(img_bgr):
+    # Get word-level OCR data
+    ocr_data = pytesseract.image_to_data(img_bgr, output_type=pytesseract.Output.DICT)
+    words = ocr_data['text']
+    left = ocr_data['left']
+    top = ocr_data['top']
+    width = ocr_data['width']
+    height = ocr_data['height']
+
+    # Reconstruct full text for Presidio
+    full_text = ' '.join(words)
+
+    # Initialize Presidio Analyzer
+    analyzer = AnalyzerEngine()
+    results = analyzer.analyze(text=full_text, entities=[], language='en')
+
+    # Find coordinates for PII entities
+    pii_boxes = []
+    for result in results:
+        pii_text = full_text[result.start:result.end]
+        # Find matching word(s) and their bounding boxes
+        for i, word in enumerate(words):
+            if word and pii_text.strip() in word:
+                box = (left[i], top[i], left[i] + width[i], top[i] + height[i])
+                pii_boxes.append(box)
+
+    return pii_boxes 
+
+
+def detect_pii_spacy(img_bgr):
+    # Load spaCy English model
+    nlp = spacy.load("en_core_web_sm")
+
+    
+    # Get word-level OCR data
+    ocr_data = pytesseract.image_to_data(img_bgr, output_type=pytesseract.Output.DICT)
+    words = ocr_data['text']
+    left = ocr_data['left']
+    top = ocr_data['top']
+    width = ocr_data['width']
+    height = ocr_data['height']
+    
+    # Reconstruct full text for spaCy
+    full_text = ' '.join(words)
+    
+    
+    pii_boxes = []
+    
+    # Use spaCy to detect entities
+    doc = nlp(full_text)
+    bank_pattern = r'^\d{8,16}$'
+    for i, word in enumerate(words):
+        if re.fullmatch(bank_pattern, word):
+            box = (left[i], top[i], left[i] + width[i], top[i] + height[i])
+            pii_boxes.append(box)
+
+    for ent in doc.ents:
+        if ent.label_ in ["PERSON", "GPE", "ORG", "LOC", "DATE", "TIME", "MONEY", "CARDINAL", "FAC"]:  # Add more labels as needed
+            ent_text = ent.text.strip()
+            # Find matching word(s) and their bounding boxes
+            for i, word in enumerate(words):
+                if word and ent_text in word:
+                    box = (left[i], top[i], left[i] + width[i], top[i] + height[i])
+                    pii_boxes.append(box)
+    return pii_boxes
+
 # ------------------------------------
 # Sidebar controls
 # ------------------------------------
@@ -107,7 +178,8 @@ st.sidebar.header("Censor Settings")
 mode = st.sidebar.selectbox("Blur style", ["Mosaic", "Gaussian Blur"])
 strength = st.sidebar.slider("Strength (larger = stronger)", min_value=5, max_value=60, value=25, step=1)
 want_faces = st.sidebar.checkbox("Censor faces", value=True)
-want_plates = st.sidebar.checkbox("Censor license plates", value=True)
+want_plates = st.sidebar.checkbox("Censor license plates")
+want_pii = st.sidebar.checkbox("Censor PII", value=True)
 show_boxes = st.sidebar.checkbox("Show detection boxes (debug)", value=False)
 
 uploaded = st.file_uploader("Upload a JPG or PNG image", type=["jpg", "jpeg", "png"])
@@ -120,6 +192,7 @@ if uploaded:
         st.stop()
 
     faces, plates = detect_faces_and_plates(img_bgr, want_faces, want_plates)
+    pii = detect_pii_spacy(img_bgr)
 
     result = img_bgr.copy()
     # Apply censorship
@@ -130,6 +203,9 @@ if uploaded:
     if want_plates:
         for (x, y, w, h) in plates:
             censor_region(result, x, y, w, h, mode, strength)
+
+    for (x, y, w, h) in pii:
+        censor_region(result, x, y, w, h, mode, strength)
 
     # Optional: draw boxes for debug on a copy
     if show_boxes:
