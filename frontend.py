@@ -167,9 +167,3 @@ if st.session_state.authenticated or get_censored_images():
         if st.session_state.refresh_needed:
             st.session_state.refresh_needed = False
             st.rerun()
-
-# Add a logout button if authenticated
-if st.session_state.authenticated:
-    if st.sidebar.button("Logout"):
-        st.session_state.authenticated = False
-        st.rerun()
