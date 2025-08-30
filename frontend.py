@@ -58,7 +58,7 @@ def setup_password():
             config = load_config()
             config["password_hash"] = hash_password(password)
             save_config(config)
-            st.success("Password set successfully! You can now authenticate.")
+            st.success("Password set successfully!")
             st.session_state.authenticated = True
             st.rerun()
         else:
@@ -84,9 +84,7 @@ def authenticate():
 def display_image_gallery():
     censored_files = get_censored_images()
     
-    if not censored_files:
-        st.info("No censored images found. Upload images to get started.")
-    else:
+    if censored_files:
         # Display images in a grid
         cols = st.columns(3)
         for i, filename in enumerate(censored_files):
@@ -121,7 +119,7 @@ else:
     st.write("Images unlocked! View the original images below.")
 
 # Only show the main content if authenticated or if there are images to show
-if st.session_state.authenticated or get_censored_images():
+if not isNewUser():
     mode = "Mosaic"  # Can choose between Mosaic and Gaussian Blur
     strength = 45  # between 5 and 60
     
@@ -158,6 +156,7 @@ if st.session_state.authenticated or get_censored_images():
                 
                 st.success(f"Processed and saved {filename}")
                 st.session_state.processed_images.append(filename)
+                st.session_state.authenticated = False
                 st.session_state.refresh_needed = True
                 
             except Exception as e:
