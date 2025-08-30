@@ -4,10 +4,18 @@ import spacy
 import numpy as np
 import pytesseract
 import re
-from presidio_analyzer import AnalyzerEngine
+from pathlib import Path
 
 # Configure Tesseract path
 pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+
+# Configuration
+IMAGES_DIR = "images"
+CENSORED_DIR = "censored"
+
+# Create directories if they don't exist
+Path(IMAGES_DIR).mkdir(exist_ok=True)
+Path(CENSORED_DIR).mkdir(exist_ok=True)
 
 # ------------------------------------
 # Image Processing Functions
@@ -106,47 +114,26 @@ def detect_faces_and_plates(img_bgr: np.ndarray, want_faces: bool, want_plates: 
     
     return faces, plates, warnings
 
-def detect_pii_presidio(img_bgr):
-    """Detect PII using Microsoft Presidio analyzer."""
-    # Get word-level OCR data
-    ocr_data = pytesseract.image_to_data(img_bgr, output_type=pytesseract.Output.DICT)
-    words = ocr_data['text']
-    left = ocr_data['left']
-    top = ocr_data['top']
-    width = ocr_data['width']
-    height = ocr_data['height']
-
-    # Reconstruct full text for Presidio
-    full_text = ' '.join(words)
-
-    # Initialize Presidio Analyzer
-    analyzer = AnalyzerEngine()
-    results = analyzer.analyze(text=full_text, entities=[], language='en')
-
-    # Find coordinates for PII entities
-    pii_boxes = []
-    for result in results:
-        pii_text = full_text[result.start:result.end]
-        # Find matching word(s) and their bounding boxes
-        for i, word in enumerate(words):
-            if word and pii_text.strip() in word:
-                box = (left[i], top[i], left[i] + width[i], top[i] + height[i])
-                pii_boxes.append(box)
-
-    return pii_boxes 
-
 def detect_pii_spacy(img_bgr):
     """Detect PII using spaCy NER and regex patterns."""
     # Load spaCy English model
-    nlp = spacy.load("en_core_web_sm")
+    try:
+        nlp = spacy.load("en_core_web_sm")
+    except OSError:
+        # Return empty list if spaCy model is not available
+        return []
     
     # Get word-level OCR data
-    ocr_data = pytesseract.image_to_data(img_bgr, output_type=pytesseract.Output.DICT)
-    words = ocr_data['text']
-    left = ocr_data['left']
-    top = ocr_data['top']
-    width = ocr_data['width']
-    height = ocr_data['height']
+    try:
+        ocr_data = pytesseract.image_to_data(img_bgr, output_type=pytesseract.Output.DICT)
+        words = ocr_data['text']
+        left = ocr_data['left']
+        top = ocr_data['top']
+        width = ocr_data['width']
+        height = ocr_data['height']
+    except:
+        # Return empty list if OCR fails
+        return []
     
     # Reconstruct full text for spaCy
     full_text = ' '.join(words)
@@ -206,3 +193,30 @@ def process_image(img_bgr: np.ndarray, want_faces: bool, want_plates: bool, want
             censor_region(result, x, y, w, h, mode, strength)
     
     return result, faces, plates, pii, warnings
+
+def process_all_images(mode, strength, want_faces, want_plates, want_pii):
+    """Process all images in the images directory"""
+    image_extensions = ('.jpg', '.jpeg', '.png', '.bmp', '.tiff')
+    image_files = [f for f in os.listdir(IMAGES_DIR) 
+                  if f.lower().endswith(image_extensions)]
+    
+    for filename in image_files:
+        image_path = os.path.join(IMAGES_DIR, filename)
+        img_bgr = cv2.imread(image_path)
+        if img_bgr is not None:
+            result, faces, plates, pii, warnings = process_image(
+                img_bgr, want_faces, want_plates, want_pii, mode, strength
+            )
+            censored_path = os.path.join(CENSORED_DIR, filename)
+            cv2.imwrite(censored_path, result)
+
+def get_censored_images():
+    """Get list of censored images"""
+    image_extensions = ('.jpg', '.jpeg', '.png', '.bmp', '.tiff')
+    return [f for f in os.listdir(CENSORED_DIR) 
+            if f.lower().endswith(image_extensions)]
+
+def get_original_image(filename):
+    """Load original image from images directory"""
+    original_path = os.path.join(IMAGES_DIR, filename)
+    return cv2.imread(original_path)
