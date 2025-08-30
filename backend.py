@@ -86,7 +86,7 @@ def get_cascades():
 
     return face_cascade, plate_cascade, face_xml, [os.path.join(cv2.data.haarcascades, n) for n in plate_xml_candidates]
 
-def detect_faces_and_plates(img_bgr: np.ndarray, want_faces: bool, want_plates: bool):
+def detect_faces_and_plates(img_bgr: np.ndarray):
     """Detect faces and license plates in an image using OpenCV cascades."""
     face_cascade, plate_cascade, face_xml_path, plate_xml_paths = get_cascades()
     gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
@@ -95,22 +95,20 @@ def detect_faces_and_plates(img_bgr: np.ndarray, want_faces: bool, want_plates: 
     plates = []
     warnings = []
 
-    if want_faces:
-        if face_cascade is not None and not face_cascade.empty():
-            faces = face_cascade.detectMultiScale(
-                gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30)
-            )
-        else:
-            warnings.append("Face detector (haarcascade_frontalface_default.xml) not found in your OpenCV installation.")
+    if face_cascade is not None and not face_cascade.empty():
+        faces = face_cascade.detectMultiScale(
+            gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30)
+        )
+    else:
+        warnings.append("Face detector (haarcascade_frontalface_default.xml) not found in your OpenCV installation.")
 
-    if want_plates:
-        if plate_cascade is not None and not plate_cascade.empty():
-            # License plates are often wider than tall, so a slightly larger minSize helps
-            plates = plate_cascade.detectMultiScale(
-                gray, scaleFactor=1.1, minNeighbors=3, minSize=(60, 20)
-            )
-        else:
-            warnings.append("License plate cascade not found (looked for Russian plate cascades).")
+    if plate_cascade is not None and not plate_cascade.empty():
+        # License plates are often wider than tall, so a slightly larger minSize helps
+        plates = plate_cascade.detectMultiScale(
+            gray, scaleFactor=1.1, minNeighbors=3, minSize=(60, 20)
+        )
+    else:
+        warnings.append("License plate cascade not found (looked for Russian plate cascades).")
     
     return faces, plates, warnings
 
@@ -162,39 +160,31 @@ def detect_pii_spacy(img_bgr):
     
     return pii_boxes
 
-def process_image(img_bgr: np.ndarray, want_faces: bool, want_plates: bool, want_pii: bool, mode: str, strength: int):
+def process_image(img_bgr: np.ndarray, mode: str, strength: int):
     """Main processing function that applies all detections and censoring."""
     result = img_bgr.copy()
     warnings = []
     
     # Detect faces and plates
-    faces, plates, detection_warnings = detect_faces_and_plates(img_bgr, want_faces, want_plates)
+    faces, plates, detection_warnings = detect_faces_and_plates(img_bgr)
     warnings.extend(detection_warnings)
     
     # Detect PII
-    pii = []
-    if want_pii:
-        try:
-            pii = detect_pii_spacy(img_bgr)
-        except Exception as e:
-            warnings.append(f"PII detection failed: {str(e)}")
-    
+    pii = detect_pii_spacy(img_bgr)
+        
     # Apply censorship
-    if want_faces:
-        for (x, y, w, h) in faces:
-            censor_region(result, x, y, w, h, mode, strength)
+    for (x, y, w, h) in faces:
+        censor_region(result, x, y, w, h, mode, strength)
 
-    if want_plates:
-        for (x, y, w, h) in plates:
-            censor_region(result, x, y, w, h, mode, strength)
+    for (x, y, w, h) in plates:
+        censor_region(result, x, y, w, h, mode, strength)
 
-    if want_pii:
-        for (x, y, w, h) in pii:
-            censor_region(result, x, y, w, h, mode, strength)
+    for (x, y, w, h) in pii:
+        censor_region(result, x, y, w, h, mode, strength)
     
     return result, faces, plates, pii, warnings
 
-def process_all_images(mode, strength, want_faces, want_plates, want_pii):
+def process_all_images(mode, strength):
     """Process all images in the images directory"""
     image_extensions = ('.jpg', '.jpeg', '.png', '.bmp', '.tiff')
     image_files = [f for f in os.listdir(IMAGES_DIR) 
@@ -205,7 +195,7 @@ def process_all_images(mode, strength, want_faces, want_plates, want_pii):
         img_bgr = cv2.imread(image_path)
         if img_bgr is not None:
             result, faces, plates, pii, warnings = process_image(
-                img_bgr, want_faces, want_plates, want_pii, mode, strength
+                img_bgr, mode, strength
             )
             censored_path = os.path.join(CENSORED_DIR, filename)
             cv2.imwrite(censored_path, result)

@@ -17,7 +17,7 @@ Path(IMAGES_DIR).mkdir(exist_ok=True)
 Path(CENSORED_DIR).mkdir(exist_ok=True)
 
 # Configure Streamlit page
-st.set_page_config(page_title="Face & Plate Censor", page_icon="🕶️", layout="centered")
+st.set_page_config(page_title="Secure Photo Gallery", layout="centered")
 
 # Password Management
 def load_config():
@@ -36,23 +36,24 @@ def hash_password(password):
 def check_password(password, password_hash):
     return hash_password(password) == password_hash
 
-def setup_password():
+def isNewUser():
     config = load_config()
-    if config.get("password_hash") is None:
-        st.sidebar.subheader("First-time Setup")
-        password = st.sidebar.text_input("Set a password", type="password")
-        confirm_password = st.sidebar.text_input("Confirm password", type="password")
+    return (config.get("password_hash") is None)
+
+def setup_password():
+    st.write("Welcome! Set up your authentication password first to start using this app.")
+    st.sidebar.subheader("First-time Setup")
+    password = st.sidebar.text_input("Set a password", type="password", autocomplete="new-password")
+    confirm_password = st.sidebar.text_input("Confirm password", type="password", autocomplete="new-password")
         
-        if st.sidebar.button("Set Password") and password:
-            if password == confirm_password:
-                config["password_hash"] = hash_password(password)
-                save_config(config)
-                st.sidebar.success("Password set successfully!")
-                return True
-            else:
-                st.sidebar.error("Passwords do not match")
-                return False
-    return True
+    if st.sidebar.button("Set Password") and password:
+        if password == confirm_password:
+            config = load_config()
+            config["password_hash"] = hash_password(password)
+            save_config(config)
+            st.sidebar.success("Password set successfully!")
+        else:
+            st.sidebar.error("Passwords do not match")
 
 def authenticate():
     config = load_config()
@@ -60,50 +61,35 @@ def authenticate():
         return False
     
     st.sidebar.subheader("Authentication")
-    password = st.sidebar.text_input("Enter password", type="password")
-    if st.sidebar.button("Authenticate"):
+    password = st.sidebar.text_input("Enter password", type="password", autocomplete="new-password")
+    if st.sidebar.button("Enter"):
         if check_password(password, config["password_hash"]):
             st.session_state.authenticated = True
-            st.sidebar.success("Authenticated!")
+            st.sidebar.success("Success!")
         else:
             st.sidebar.error("Incorrect password")
     
     return st.session_state.get("authenticated", False)
 
 # Main Application
-st.title("🕶️ Face & License Plate Censor")
-st.write("Automatically censor images in the 'images' folder and view them with password protection.")
-
-# Password setup and authentication
-if not setup_password():
-    st.stop()
+st.title("Secure Photo Gallery")
+if isNewUser():
+    setup_password()
+elif not st.session_state.get("authenticated"):
+    st.write("Images with private or sensitive information blurred. Unlock them with password.")
+else:
+    st.write("Images unlocked! View the original images below.")
 
 authenticated = authenticate()
 
-# ------------------------------------
-# Sidebar controls
-# ------------------------------------
-st.sidebar.header("Censor Settings")
-mode = st.sidebar.selectbox("Blur style", ["Mosaic", "Gaussian Blur"])
-strength = st.sidebar.slider("Strength (larger = stronger)", min_value=5, max_value=60, value=25, step=1)
-want_faces = st.sidebar.checkbox("Censor faces", value=True)
-want_plates = st.sidebar.checkbox("Censor license plates")
-want_pii = st.sidebar.checkbox("Censor PII", value=True)
-show_boxes = st.sidebar.checkbox("Show detection boxes (debug)", value=False)
-
-# Process images button
-if st.sidebar.button("Process All Images"):
-    with st.spinner("Processing all images..."):
-        process_all_images(mode, strength, want_faces, want_plates, want_pii)
-    st.success("All images processed successfully!")
+mode = "Mosaic" # Can choose between Mosaic and Gaussian Blur
+strength = 45 # between 5 and 60
 
 # Display censored images
-st.header("Censored Images")
+st.header("Images")
 censored_files = get_censored_images()
 
-if not censored_files:
-    st.info("No censored images found. Process images first.")
-else:
+if censored_files:
     # Display images in a grid
     cols = st.columns(3)
     for i, filename in enumerate(censored_files):
@@ -123,11 +109,13 @@ else:
             else:
                 col.warning("Original not found")
         else:
-            col.info("Authenticate to view original")
+            col.info("Unlock to view original")
 
 # Upload new images section
-st.header("Upload New Images")
-uploaded = st.file_uploader("Upload a JPG or PNG image to censor", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
+uploaded = None
+if not isNewUser():
+    st.header("Upload New Images")
+    uploaded = st.file_uploader("Upload a JPG or PNG image", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
 
 if uploaded:
     for file in uploaded:
@@ -142,25 +130,11 @@ if uploaded:
             # Process and save censored image
             with st.spinner(f"Processing {filename}..."):
                 result, faces, plates, pii, warnings = process_image(
-                    img_bgr, want_faces, want_plates, want_pii, mode, strength
+                    img_bgr, mode, strength
                 )
                 
                 censored_path = os.path.join(CENSORED_DIR, filename)
                 cv2.imwrite(censored_path, result)
             
-            st.success(f"Processed and saved {filename}")
-            
         except Exception as e:
             st.error(f"Error processing {file.name}: {str(e)}")
-
-# Footer notes
-with st.expander("Notes & Tips"):
-    st.markdown("""
-- Place images to be censored in the images folder
-- Censored images are saved in the censored folder
-- Face detection uses haarcascade_frontalface_default.xml
-- Plate detection uses a Russian license plate cascade if available
-- PII detection uses spaCy NER to detect names, organizations, locations, and regex patterns
-- Set a password on first run to protect original images
-- All processing is done locally
-    """)
